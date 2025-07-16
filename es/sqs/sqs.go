@@ -55,7 +55,7 @@ func (r *SQS) Send(ctx context.Context, evt *outboxer.OutboxMessage) error {
 
 	input := &sqs.SendMessageInput{
 		QueueUrl:               opts.queueName,
-		MessageBody:            aws.String(string((evt.Payload))),
+		MessageBody:            aws.String(string(evt.Payload)),
 		DelaySeconds:           opts.delaySeconds,
 		MessageGroupId:         opts.msgGroupID,
 		MessageDeduplicationId: opts.msgDedupID,

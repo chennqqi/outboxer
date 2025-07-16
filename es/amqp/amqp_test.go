@@ -17,7 +17,7 @@ func TestAMQP_EventStream(t *testing.T) {
 	defer cancel()
 
 	endpoint := os.Getenv("ES_DSN")
-	if endpoint == "" {
+	if len(endpoint) == 0 {
 		endpoint = "amqp://localhost/"
 	}
 

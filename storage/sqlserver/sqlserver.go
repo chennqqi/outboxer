@@ -49,7 +49,7 @@ func WithInstance(ctx context.Context, db *sql.DB) (*SQLServer, error) {
 		return nil, err
 	}
 
-	if s.DatabaseName == "" {
+	if len(s.DatabaseName) == 0 {
 		return nil, ErrNoDatabaseName
 	}
 
@@ -57,11 +57,11 @@ func WithInstance(ctx context.Context, db *sql.DB) (*SQLServer, error) {
 		return nil, err
 	}
 
-	if s.SchemaName == "" {
+	if len(s.SchemaName) == 0 {
 		return nil, ErrNoSchema
 	}
 
-	if s.EventStoreTable == "" {
+	if len(s.EventStoreTable) == 0 {
 		s.EventStoreTable = DefaultEventStoreTable
 	}
 

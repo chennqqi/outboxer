@@ -52,13 +52,13 @@ func WithInstance(ctx context.Context, db *sql.DB) (*MySQL, error) {
 		return nil, err
 	}
 
-	if databaseName.String == "" {
+	if len(databaseName.String) == 0 {
 		return nil, ErrNoDatabaseName
 	}
 
 	p.DatabaseName = databaseName.String
 
-	if p.EventStoreTable == "" {
+	if len(p.EventStoreTable) == 0 {
 		p.EventStoreTable = DefaultEventStoreTable
 	}
 

@@ -10,7 +10,7 @@ func TestLock_Generate(t *testing.T) {
 		t.Fatalf("failed to generate an advisory lock: %s", err)
 	}
 
-	if aid == "" {
+	if len(aid) == 0 {
 		t.Fatal("the advisory lock cannot be empty")
 	}
 
