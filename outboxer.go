@@ -8,6 +8,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log"
+	"sync/atomic"
 	"time"
 )
 
@@ -55,6 +57,10 @@ type Outboxer struct {
 	cleanUpInterval  time.Duration
 	cleanUpBatchSize int32
 	messageBatchSize int32
+
+	cancelFn            context.CancelFunc
+	dispatchRoutineDone int32
+	cleanupRoutineDone  int32
 }
 
 // New creates a new instance of Outboxer.
@@ -64,6 +70,8 @@ func New(opts ...Option) (*Outboxer, error) {
 		okChan:           make(chan struct{}),
 		messageBatchSize: messageBatchSize,
 		cleanUpBatchSize: cleanUpBatchSize,
+		checkInterval:    5 * time.Second,  // 默认检查间隔
+		cleanUpInterval:  30 * time.Second, // 默认清理间隔
 	}
 
 	for _, opt := range opts {
@@ -77,7 +85,6 @@ func New(opts ...Option) (*Outboxer, error) {
 	if o.es == nil {
 		return nil, ErrMissingEventStream
 	}
-
 	return &o, nil
 }
 
@@ -105,15 +112,23 @@ func (o *Outboxer) SendWithinTx(ctx context.Context, evt *OutboxMessage, fn func
 // from the data store and sending to the event stream.
 // Starts the cleanup process, that makes sure old messages are removed from the data store.
 func (o *Outboxer) Start(ctx context.Context) {
-	go o.StartDispatcher(ctx)
-
-	go o.StartCleanup(ctx)
+	nctx, cancel := context.WithCancel(ctx)
+	o.cancelFn = cancel
+	go o.StartDispatcher(nctx)
+	go o.StartCleanup(nctx)
 }
 
 // StartDispatcher starts the dispatcher, which is responsible for getting the messages
 // from the data store and sending to the event stream.
 func (o *Outboxer) StartDispatcher(ctx context.Context) {
 	ticker := time.NewTicker(o.checkInterval)
+
+	atomic.StoreInt32(&o.dispatchRoutineDone, 1)
+	defer func() {
+		ticker.Stop()
+		log.Println("dispatcher done")
+		atomic.StoreInt32(&o.dispatchRoutineDone, 2)
+	}()
 
 	for {
 		select {
@@ -144,6 +159,12 @@ func (o *Outboxer) StartDispatcher(ctx context.Context) {
 // StartCleanup starts the cleanup process, that makes sure old messages are removed from the data store.
 func (o *Outboxer) StartCleanup(ctx context.Context) {
 	ticker := time.NewTicker(o.cleanUpInterval)
+	atomic.StoreInt32(&o.cleanupRoutineDone, 1)
+	defer func() {
+		log.Println("cleanup done")
+		ticker.Stop()
+		atomic.StoreInt32(&o.cleanupRoutineDone, 2)
+	}()
 
 	for {
 		select {
@@ -157,8 +178,46 @@ func (o *Outboxer) StartCleanup(ctx context.Context) {
 	}
 }
 
-// Stop closes all channels.
-func (o *Outboxer) Stop() {
-	close(o.errChan)
-	close(o.okChan)
+// Stop closes all channels safely.
+func (o *Outboxer) Stop() error {
+	log.Println("on stop")
+	// Check if both routines are started
+	if atomic.LoadInt32(&o.dispatchRoutineDone) < 1 || atomic.LoadInt32(&o.cleanupRoutineDone) < 1 {
+		log.Println("stop quit because not start")
+		return errors.New("not started")
+	}
+	log.Println("stopping")
+	o.cancelFn()
+
+	// Wait for dispatcher routine to finish
+	for {
+		state := atomic.LoadInt32(&o.dispatchRoutineDone)
+		if state == 2 {
+			log.Println("stop and close ok")
+			close(o.okChan)
+			atomic.StoreInt32(&o.dispatchRoutineDone, 3)
+			break
+		}
+		if state > 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond) // Reduced sleep time for better responsiveness
+	}
+
+	// Wait for cleanup routine to finish
+	for {
+		state := atomic.LoadInt32(&o.cleanupRoutineDone)
+		if state == 2 {
+			log.Println("stop and close error")
+			close(o.errChan)
+			atomic.StoreInt32(&o.cleanupRoutineDone, 3)
+			break
+		}
+		if state > 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond) // Reduced sleep time for better responsiveness
+	}
+
+	return nil
 }

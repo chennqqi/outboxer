@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,14 +13,27 @@ import (
 )
 
 type inMemDS struct {
-	data []*outboxer.OutboxMessage
+	mutex   sync.Mutex
+	data    []*outboxer.OutboxMessage
+	counter int64
 }
 
 func (inmem *inMemDS) GetEvents(ctx context.Context, batchSize int32) ([]*outboxer.OutboxMessage, error) {
-	return inmem.data, nil
+	inmem.mutex.Lock()
+	defer inmem.mutex.Unlock()
+
+	var undispatched []*outboxer.OutboxMessage
+	for _, m := range inmem.data {
+		if !m.Dispatched {
+			undispatched = append(undispatched, m)
+		}
+	}
+	return undispatched, nil
 }
 
 func (inmem *inMemDS) SetAsDispatched(ctx context.Context, id int64) error {
+	inmem.mutex.Lock()
+	defer inmem.mutex.Unlock()
 	for _, m := range inmem.data {
 		if m.ID == id {
 			m.Dispatched = true
@@ -33,16 +47,26 @@ func (inmem *inMemDS) SetAsDispatched(ctx context.Context, id int64) error {
 }
 
 func (inmem *inMemDS) Add(ctx context.Context, m *outboxer.OutboxMessage) error {
+	inmem.mutex.Lock()
+	defer inmem.mutex.Unlock()
+
+	inmem.counter++
+	m.ID = inmem.counter
 	inmem.data = append(inmem.data, m)
 
 	return nil
 }
 
 func (inmem *inMemDS) AddWithinTx(ctx context.Context, m *outboxer.OutboxMessage, fn func(outboxer.ExecerContext) error) error {
+	// inmem.mutex.Lock()
+	// defer inmem.mutex.Unlock()
+
 	return inmem.Add(ctx, m)
 }
 
 func (inmem *inMemDS) Remove(ctx context.Context, cleanUpBefore time.Time, batchSize int32) error {
+	// inmem.mutex.Lock()
+	// defer inmem.mutex.Unlock()
 	for i, m := range inmem.data {
 		if m.DispatchedAt.Time == cleanUpBefore {
 			inmem.data = append(inmem.data[:i], inmem.data[i+1:]...)
@@ -50,7 +74,7 @@ func (inmem *inMemDS) Remove(ctx context.Context, cleanUpBefore time.Time, batch
 		}
 	}
 
-	return errors.New("event not found")
+	return nil
 }
 
 type inMemES struct {

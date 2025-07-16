@@ -289,7 +289,9 @@ func (m *MongoDB) Remove(ctx context.Context, dispatchedBefore time.Time, batchS
 	findOpts := options.Find().SetLimit(int64(batchSize)).SetProjection(bson.M{"_id": 1})
 
 	cursor, err := m.collection.Find(ctx, filter, findOpts)
-	if err != nil {
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return nil
+	} else if err != nil {
 		return fmt.Errorf("failed to find messages to remove: %w", err)
 	}
 	defer cursor.Close(ctx)
