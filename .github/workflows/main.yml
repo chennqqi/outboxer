@@ -4,10 +4,43 @@ on:
   push: { branches: [main, master] }
 
 jobs:
-  test:
-    name: Test
+  # 快速单元测试 - 所有PR都运行
+  unit-tests:
+    name: Unit Tests
     runs-on: ubuntu-latest
+    steps:
+    - name: Setup Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
 
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+
+    - name: Run unit tests
+      run: go test -v -cover -covermode=atomic -coverprofile=coverage.out ./...
+
+    - name: Run quick benchmarks
+      run: go test -bench=. -benchtime=100ms ./...
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        files: ./coverage.out
+        fail_ci_if_error: false
+
+  # 完整集成测试 - 只在主分支运行
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    
     env:
       DEFAULT_REGION: eu-central-1
       AWS_ACCOUNT_ID: "000000000000"
@@ -15,39 +48,75 @@ jobs:
       AWS_SECRET_ACCESS_KEY: test
 
     steps:
-    - name: Setup go
-      uses: actions/setup-go@v2
+    - name: Setup Go
+      uses: actions/setup-go@v4
       with:
-        go-version: 1.21.x
+        go-version: '1.21'
 
     - name: Install awslocal
-      run: |
-        pip install awscli-local
+      run: pip install awscli-local
 
     - name: Checkout code
       uses: actions/checkout@v3
-      with:
-        ref: ${{github.event.pull_request.head.ref}}
-        repository: ${{github.event.pull_request.head.repo.full_name}}
 
-    - name: Build the stack
+    - name: Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+
+    - name: Install Docker Compose
+      run: |
+        sudo curl -L "https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+        sudo chmod +x /usr/local/bin/docker-compose
+        docker-compose --version
+
+    - name: Start services
       run: docker-compose -f build/docker-compose.yml up -d
 
-    - name: Build localstack
-      run: | 
-        sleep 10
-        awslocal kinesis create-stream --stream-name test --shard-count 1
-        make test
+    - name: Wait for services
+      run: |
+        echo "Waiting for services to be ready..."
+        sleep 45
+        
+        # Check service status
+        docker-compose -f build/docker-compose.yml ps
+        
+        # Simple health checks with retries
+        for i in {1..10}; do
+          if docker-compose -f build/docker-compose.yml exec -T postgres pg_isready -U admin -d outboxer; then
+            echo "PostgreSQL is ready!"
+            break
+          fi
+          echo "Waiting for PostgreSQL... (attempt $i/10)"
+          sleep 3
+        done
+        
+        for i in {1..10}; do
+          if docker-compose -f build/docker-compose.yml logs rabbit | grep -q "Server startup complete"; then
+            echo "RabbitMQ is ready!"
+            break
+          fi
+          echo "Waiting for RabbitMQ... (attempt $i/10)"
+          sleep 3
+        done
 
-    - name: Test
+    - name: Setup AWS services
+      run: |
+        sleep 5
+        awslocal kinesis create-stream --stream-name test --shard-count 1 || true
+
+    - name: Run unit tests
+      run: make test
+
+    - name: Run integration tests
+      env:
+        MONGO_URI: "mongodb://admin:password@localhost:27017/outboxer_test?authSource=admin"
+        AMQP_URI: "amqp://guest:guest@localhost:5672/"
+        POSTGRES_URI: "postgres://admin:admin@localhost:5432/outboxer?sslmode=disable"
+        RABBITMQ_URI: "amqp://guest:guest@localhost:5672/"
       run: make test-integration
 
-    - name: Down the stack
+    - name: Cleanup
       if: always()
       run: docker-compose -f build/docker-compose.yml down -v
-
-    - uses: codecov/codecov-action@v3
-      with:
-        files: ./tests.out
-        fail_ci_if_error: false
-        verbose: true
