@@ -12,7 +12,7 @@ jobs:
     - name: Setup Go
       uses: actions/setup-go@v4
       with:
-        go-version: '1.21'
+        go-version: '1.23'
 
     - name: Checkout code
       uses: actions/checkout@v3
@@ -22,6 +22,29 @@ jobs:
       with:
         path: ~/go/pkg/mod
         key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Download and tidy dependencies
+      run: |
+        echo "Downloading Go modules..."
+        go mod download
+        echo "Tidying Go modules..."
+        go mod tidy
+        echo "Verifying Go modules..."
+        go mod verify
+        echo "Listing Go modules..."
+        go list -m all
+
+    - name: Install missing dependencies
+      run: |
+        echo "Installing any missing dependencies..."
+        go get -u go.opentelemetry.io/otel/sdk/trace@latest || true
+        go get -u github.com/lib/pq@latest || true
+        go get -u cloud.google.com/go/internal/testutil@latest || true
+        go mod tidy
+        echo "Final dependency check..."
+        go mod verify
 
     - name: Run unit tests
       run: go test -v -cover -covermode=atomic -coverprofile=coverage.out ./...
@@ -51,7 +74,7 @@ jobs:
     - name: Setup Go
       uses: actions/setup-go@v4
       with:
-        go-version: '1.21'
+        go-version: '1.23'
 
     - name: Install awslocal
       run: pip install awscli-local
@@ -64,6 +87,29 @@ jobs:
       with:
         path: ~/go/pkg/mod
         key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Download and tidy dependencies
+      run: |
+        echo "Downloading Go modules..."
+        go mod download
+        echo "Tidying Go modules..."
+        go mod tidy
+        echo "Verifying Go modules..."
+        go mod verify
+        echo "Listing Go modules..."
+        go list -m all
+
+    - name: Install missing dependencies
+      run: |
+        echo "Installing any missing dependencies..."
+        go get -u go.opentelemetry.io/otel/sdk/trace@latest || true
+        go get -u github.com/lib/pq@latest || true
+        go get -u cloud.google.com/go/internal/testutil@latest || true
+        go mod tidy
+        echo "Final dependency check..."
+        go mod verify
 
     - name: Install Docker Compose
       run: |
